@@ -33,7 +33,7 @@ Both remain independent and callable directly when you only need one half.
 Drop this folder into your skills directory:
 
 ```bash
-git clone https://github.com/Allenfang2026/p2h2p.git ~/.claude/skills/p2h2p
+git clone https://github.com/Allenfang2026/getihu-p2h2p.git ~/.claude/skills/p2h2p
 ```
 
 Then make sure its two dependency skills are also installed:
@@ -99,7 +99,7 @@ P2H2P 是一个给 [Claude Code](https://docs.claude.com/en/docs/claude-code) �
 把这个文件夹放进你的 skills 目录：
 
 ```bash
-git clone https://github.com/Allenfang2026/p2h2p.git ~/.claude/skills/p2h2p
+git clone https://github.com/Allenfang2026/getihu-p2h2p.git ~/.claude/skills/p2h2p
 ```
 
 再确认这两个依赖 skill 也装了：
