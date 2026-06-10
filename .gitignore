@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+
+# editor
+.vscode/
+.idea/
+
+# scratch / generated decks (this repo ships the skill, not deck output)
+/tmp/
+*.pptx
+*.tmp
