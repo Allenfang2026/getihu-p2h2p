@@ -2,6 +2,9 @@
 
 [English](#p2h2p--ppt--html--ppt) · [中文](#中文说明)
 
+[![小红书 getihu](https://img.shields.io/badge/小红书-getihu_·_10.9K_赞藏-FF2442?logo=xiaohongshu&logoColor=white)](https://xhslink.com/m/1Ktm7c5XdpT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green)](./LICENSE)
+
 A [Claude Code](https://docs.claude.com/en/docs/claude-code) / Claude **skill** that turns rough input into a polished, editable slide deck — delivering **both** an editable HTML deck and an editable `.pptx`.
 
 P2H2P = **PPT → HTML → PPT**: any input → HTML as the ground-truth middle layer → PPT output.
@@ -64,6 +67,12 @@ P2H2P's own contribution is the pipeline glue: structured semantic content extra
 
 [MIT](./LICENSE) © 2026 Allen Fang
 
+## Follow me
+
+I post on Xiaohongshu (RED) as **getihu** — **10.9K likes & saves** so far. More builds, skills, and one-person-company experiments over there:
+
+👉 **[Visit my Xiaohongshu profile](https://xhslink.com/m/1Ktm7c5XdpT)**
+
 ---
 
 ## 中文说明
@@ -119,3 +128,9 @@ git clone https://github.com/Allenfang2026/getihu-p2h2p.git ~/.claude/skills/p2h
 - **`pptx`**——负责 HTML 转 `.pptx` 和视觉 QA（5–6 阶段）。
 
 P2H2P 自己写的部分是把这些粘起来的那层逻辑：结构化的语义抽取、带定时唤醒超时的 3 检查点异步评审流程、builder 失败时的递归切半重试、每个 builder 配一个 mini-reviewer 的自检循环，以及改已交付 deck 的迭代模式。
+
+### 关注我
+
+我在小红书叫 **getihu**，目前攒了 **10.9K 赞与收藏**。更多 AI 工具、skill、一人公司的折腾都发在那儿：
+
+👉 **[来看看我的小红书主页](https://xhslink.com/m/1Ktm7c5XdpT)**
