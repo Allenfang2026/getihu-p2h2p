@@ -36,6 +36,10 @@ INPUT (.pptx / text / image / mix)
   ↓
 Phase 0  Setup            (auto)    — git init, project folder, dependency check
   ↓
+Phase 0.5 Domain research (cond.)   — ONLY for content-driven decks from a rough idea (教案/提案/行业分析/方案).
+  ↓                                    2-3 focused agents → docs/调研要点.md. Skip for rebuilds of an existing PPT.
+  ⏸️  (optional) MULTI-PLAN PICK: on a big direction fork, render an HTML plan-comparison page; user picks before Phase 1.
+  ↓
 Phase 1  Content extract  (auto)    — markitdown / vision / read; produce outline.md
   ⏸️  CHECKPOINT 1: user reviews outline; reorder/add/drop pages
   ↓
@@ -63,6 +67,7 @@ OUTPUT  HTML + .pptx + report
 5. **`git init` is Phase 0.0**: every deck is a git project from second one. Commit per phase. Never `cp foo.html foo.html.bak` as a safety net.
 6. **A build doesn't ship until a reviewer-pass agent sees it**: `node build.js` exiting 0 only proves the code ran — it does NOT prove text fits its container, that 380pt glyphs don't overflow their bbox, that captions don't collide with peak badges, or that adjacent columns aren't 0.3" apart and read as one number. After every build (including iterations), render to JPGs and dispatch a reviewer agent against the actual rendered output before declaring done. Don't ask the user "does this look ok?" as the first visual check — that's the agent outsourcing its own QA. See Phase 6 for the required reviewer-pass contract.
 7. **Every visible element must answer "so what?"**: the test for any text/shape/stat on a slide is "what does the reader gain from this, that isn't already visible elsewhere on the same slide or in the page chrome?" If the answer is "nothing" or "the same info" (e.g. a stat panel restating the page count, a footer repeating the slide title), the element is filler — delete it and let the layout breathe, OR replace with content drawn from the actual report data. Self-referential deck metadata is the easiest filler to invent and the most common offender; reject it on sight.
+8. **Agent-authored Chinese prose MUST go through `humanizer-zh` before shipping**: any 讲稿 / 说课稿 / narration script, invented slide copy, 大纲 description, or 金句 the agent *wrote itself* (vs. copied from the user's source) is run through the `humanizer-zh` skill and de-AI'd BEFORE it's shown at a checkpoint or baked into slides. Raw first-draft AI Chinese is never the final deliverable — the user flags AI-flavored 中文 on sight. Does NOT apply to text copied verbatim from the user's source (that's contract #1's territory). See Step 1.5b and `[[feedback_dezh_ai_via_humanizer_zh]]`.
 
 ---
 
@@ -153,6 +158,67 @@ command -v pdftoppm >/dev/null || brew install poppler
 ```
 
 Output: project skeleton ready. Commit: `baseline`.
+
+---
+
+## Phase 0.5 — Domain research (conditional — content-driven decks only)
+
+For decks where **content quality decides the outcome, not the template** — 教案 / 说课 / 提案 / 行业分析 / 方案 / 竞标 / 培训课 — built from a rough idea (not a rebuild of an existing PPT), do a research pass BEFORE the outline. A beautiful template on hollow content loses; this phase is what made a real 班主任大赛说课 deck land (it surfaced the psychology theory, real award-winning lesson cases, and the competition's scoring rubric that the whole design then hung on).
+
+**When to run**: input is a topic/idea AND the deck is one of the content-driven types above.
+**When to SKIP**: rebuilding an existing `.pptx` (the content already exists — go straight to Phase 1), or a deck whose value is mostly visual (poster, brand cover, simple announcement).
+
+### How — 2-3 focused agents, NOT a 5-angle fan-out
+
+⚠️ **Do not default to the `deep-research` skill's 5-angle parallel fan-out for a focused brief — it over-spawns and burns budget.** A real run did this and the user stopped it. **2-3 focused agents is the right size** for almost any single deck's research. Only escalate to deep-research's full machinery if the user explicitly asks for exhaustive/cited research.
+
+Typical 3-agent split (adapt per topic):
+1. **Evidence / theory agent** — the domain's authoritative frameworks, models, named theorists, research backing (so every design choice can cite a "why").
+2. **Real-cases agent** — real, existing best-practice / award-winning examples to borrow concrete structure from (not generic advice).
+3. **Audience / scoring agent** — for a competition or pitch: the rubric, judging dimensions, common winning patterns, time/format constraints, how to frame the topic for that audience.
+
+Dispatch all in ONE message (parallel Agent calls). Cap each agent's output (~800-1000 words, structured points, source links) so results are usable, not bloated.
+
+### Output → `docs/调研要点.md`
+
+Consolidate all agents' findings into one structured `docs/调研要点.md` — bullet points the outline and 讲稿 can directly draw on, with sources. Commit: `research: 调研要点`.
+
+### After research, if there's a big direction fork → MULTI-PLAN PICK
+
+If the research opens up genuinely different ways to design the deck (different angles, structures, emphases — not just cosmetic), don't silently pick one. **Render an HTML plan-comparison page** and let the user choose before committing the pipeline to one direction. See the next section.
+
+---
+
+## Multi-plan decision mode (HTML comparison page)
+
+Use when there's a **big fork in "what to build"** — competing approaches, the user is unsure of direction, or research surfaced 3-4 viable designs. Don't argue it in prose paragraphs (the user can't compare); **build a single self-contained HTML page that lays the plans out side by side**, then let them pick. This was decisively better than a text description in a real run.
+
+Each plan card should contain, at minimum:
+- A one-line "what this is"
+- The concrete flow (for a deck/lesson: a step-by-step / timeline of how it actually goes)
+- A visual mockup of any key artifact (mock chart/wordcloud/card — seeing it beats describing it)
+- Pros / watch-outs / theory backing / "who it fits"
+- End with a clear recommendation (mark the recommended one ★) and note that combinations are allowed.
+
+Style it in the deck's intended palette (it doubles as a design preview). Open it in the browser AND offer a PDF (the user often forwards it to a stakeholder — e.g. the actual teacher/client).
+
+### ⚠️ HTML long-page → PDF: inject print CSS first
+
+A continuous long HTML page (not paginated) printed to PDF will **slice cards across page breaks**. Before `--print-to-pdf`, add a `@media print` block:
+
+```css
+@media print{
+  body{padding:0;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .plan,.core,.verdict,.sec,.barbox{break-inside:avoid;page-break-inside:avoid}
+}
+```
+
+`-webkit-print-color-adjust:exact` keeps background colors (Chrome strips them by default in print). Then:
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --disable-gpu \
+  --no-pdf-header-footer --print-to-pdf="out.pdf" "file:///abs/path/page.html"
+```
+Verify by rendering the PDF to JPGs and eyeballing that no card is cut — same reviewer discipline as Phase 6.
 
 ---
 
@@ -468,6 +534,38 @@ Apply ONLY these transforms to text fields in each `slides/p{NN}.json` (and the 
 - Paraphrase or "improve" sentences
 - Reorder content within a slide
 - Compress lists
+
+### Step 1.5b — De-AI pass on ANY agent-authored Chinese prose (MANDATORY)
+
+⚠️ Distinct from Step 1.5. Step 1.5 cleans *original PPT text* conservatively (never rewrites). THIS step targets Chinese prose the **agent itself generated** — and that text MUST be run through the `humanizer-zh` skill before it reaches the user or gets baked into slides.
+
+**Trigger — whenever the agent writes new Chinese long-form text**, including:
+- A 说课稿 / 讲稿 / 逐字稿 / narration script (the most common case for input=prompt decks)
+- Slide body copy, card paragraphs, section intros the agent composed from scratch (not copied from source)
+- Any 大纲 description, 金句, or 文案 the agent invented
+
+**Do NOT trigger** for: text copied verbatim from the user's source PPT/doc (that's Step 1.5's conservative territory — don't "improve" the user's own words), pure data/numbers/labels, or English copy.
+
+**How**: invoke the `humanizer-zh` skill on the drafted Chinese, apply its checklist (translation-ese, empty big words, formulaic contrast frames, sloganized endings, list inflation, rule-of-three, robotic rhythm), then save the de-AI'd version as the canonical text. For a 讲稿, run it on the whole script in one pass; for slide copy, run it per page batch.
+
+**Order**: draft → `humanizer-zh` → THEN show user at Checkpoint 1 / bake into `slides/p{NN}.json`. Never present raw first-draft AI Chinese as final — the user (fangailun) flags AI-flavored 中文 on sight; this is a hard preference, not optional polish. See `[[feedback_dezh_ai_via_humanizer_zh]]`.
+
+Log in `docs/AUTO_DECISIONS.md` that the de-AI pass ran (one line) so it's auditable.
+
+#### Also deliver the script as an editable `.docx`
+
+Whenever a 讲稿 / 说课稿 / 逐字稿 / narration script is produced, after the de-AI pass, ALSO export it to `docs/讲稿.docx` (or `说课稿.docx` — match the script's actual name) so the user can edit it directly in Word without touching markdown. The `.md` stays the working copy; the `.docx` is the user-facing editable deliverable.
+
+Convert with pandoc if available, else fall back to a small python-docx script (pandoc is often NOT installed on the user's mac — don't assume it):
+
+```bash
+command -v pandoc >/dev/null && pandoc "docs/说课稿.md" -o "docs/说课稿.docx" \
+  || python3 src/md2docx.py "docs/说课稿.md" "docs/说课稿.docx"   # python-docx fallback
+```
+
+A reusable `md2docx.py` (PingFang SC body, bold 【环节·时长】 markers in warm accent, 1.5 line spacing, drops `**`/`---`) lives at `~/.claude/skills/p2h2p/assets/md2docx.py` — copy it into the project's `src/` on first use.
+
+If the user later edits the `.docx`, re-ingest it (`pandoc -f docx -t markdown`) before regenerating slides — the `.docx` is the user's edit surface, the `.md` is the pipeline's. Mention the `.docx` path when posting the script for review at Checkpoint 1.
 
 ### Step 1.6 — Outline → `docs/OUTLINE.md`
 
