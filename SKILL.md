@@ -16,6 +16,19 @@ A 7-phase orchestrator that turns rough input (existing PPT / text / images) int
 
 This skill does NOT duplicate their logic. It dispatches them and handles the seams (content extraction, checkpoints, iteration mode).
 
+## Studio mode (optional private companion)
+
+This skill ships the *generic* pipeline. A power user may keep a **private companion library** so the skill compounds across decks instead of starting cold. The skill stays shareable; the companion stays private and is never committed to this repo.
+
+**Detection rule (run this first, every time):** check whether `~/.claude/p2h2p-studio/` exists.
+
+- **It does NOT exist** → run the plain pipeline below, standalone. Studio mode is purely additive; its absence is never an error.
+- **It DOES exist** → before Phase 0, read its `PROTOCOL.md` (binding for this run) + `memory/` (user-profile taste/tone/red-lines, and lessons) + `INDEX.md` (a same-genre past deck to borrow from). Then:
+  - **On finish** (after Phase 6): archive the deck into `~/.claude/p2h2p-studio/works/<slug>/`, write `works/<slug>/RETRO.md`, register one line in `INDEX.md`. When you were corrected / reworked / praised mid-run, also drop a `memory/lessons/<slug>.md` — only non-obvious, recurring, costly stuff.
+  - **Skill evolution**: never auto-edit this `SKILL.md`. When a lesson is cross-deck and worth standardizing, write a `proposals/<date>-<title>.md`, then **ask the user to approve** before editing + pushing the skill.
+
+---
+
 ## When to use
 
 ✅ Trigger:
