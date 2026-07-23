@@ -76,11 +76,19 @@ OUTPUT  HTML + .pptx + report
 1. **Content fidelity = "smart repair"**: original numbers/names/quotations are NEVER altered, paraphrased, summarized, or compressed. English template residue / typos / duplicate punctuation MAY be cleaned. Confirm before greyscaling any photo of living people (inauspicious in Chinese context).
 2. **HTML is the ground truth**: edits go to HTML, then re-generate PPT. `.pptx` is regenerable; never hand-edit it as the source of changes.
 3. **3 checkpoints, no more — and they're async by default**: outline / template / HTML preview. Each times out after 5 minutes and AI proceeds with sensible defaults (see Checkpoint Timeout Policy below). Users can override later via Iteration mode.
-4. **Failure: recursive shard-and-retry, then fallback**: when a subagent crashes (OOM / build error), retry once at same scope. If second attempt also fails, split the scope in half and dispatch two new agents recursively (8 pages → 4+4 → 2+2 → 1+1). Only fall back to degraded text-dump rendering on a single page that fails alone. This minimizes the blast radius of any one failure.
+4. **Failure: recursive shard-and-retry — but "dead" is a proven state, never a hunch**. One linear flow, no exceptions — **every re-dispatch (the first retry included) starts by proving the old agent dead**: (1) confirm death by all three probes at once — (a) jsonl transcript stopped growing for ≥ 90s, AND (b) expected output file absent on disk, AND (c) process gone; miss any one → it's alive-but-slow, keep waiting, do NOT re-dispatch. (2) Only once dead-confirmed: retry once at same scope. (3) If that second attempt also dies (same three-probe test) → split scope in half and dispatch new agents recursively (8 pages → 4+4 → 2+2 → 1+1), each hitting this same flow. (4) Only fall back to degraded text-dump rendering on a single page that fails alone. A re-dispatch that races a still-alive agent onto the same file is the single worst failure mode of this skill (see contract #9 + "Known orchestration failure modes" in Phase 6). This minimizes the blast radius of any one failure.
 5. **`git init` is Phase 0.0**: every deck is a git project from second one. Commit per phase. Never `cp foo.html foo.html.bak` as a safety net.
-6. **A build doesn't ship until a reviewer-pass agent sees it**: `node build.js` exiting 0 only proves the code ran — it does NOT prove text fits its container, that 380pt glyphs don't overflow their bbox, that captions don't collide with peak badges, or that adjacent columns aren't 0.3" apart and read as one number. After every build (including iterations), render to JPGs and dispatch a reviewer agent against the actual rendered output before declaring done. Don't ask the user "does this look ok?" as the first visual check — that's the agent outsourcing its own QA. See Phase 6 for the required reviewer-pass contract.
+6. **A build doesn't ship until a reviewer-pass agent sees it**: `node build.js` exiting 0 only proves the code ran — it does NOT prove text fits its container, that 380pt glyphs don't overflow their bbox, that captions don't collide with peak badges, or that adjacent columns aren't 0.3" apart and read as one number. After every build (including iterations), render to JPGs and dispatch a reviewer agent against the actual rendered output before declaring done (for small patches: reviewer on affected pages only; for structural changes: full 2-pass — see Iteration mode step 6). Don't ask the user "does this look ok?" as the first visual check — that's the agent outsourcing its own QA. See Phase 6 for the required reviewer-pass contract.
 7. **Every visible element must answer "so what?"**: the test for any text/shape/stat on a slide is "what does the reader gain from this, that isn't already visible elsewhere on the same slide or in the page chrome?" If the answer is "nothing" or "the same info" (e.g. a stat panel restating the page count, a footer repeating the slide title), the element is filler — delete it and let the layout breathe, OR replace with content drawn from the actual report data. Self-referential deck metadata is the easiest filler to invent and the most common offender; reject it on sight.
 8. **Agent-authored Chinese prose MUST go through `humanizer-zh` before shipping**: any 讲稿 / 说课稿 / narration script, invented slide copy, 大纲 description, or 金句 the agent *wrote itself* (vs. copied from the user's source) is run through the `humanizer-zh` skill and de-AI'd BEFORE it's shown at a checkpoint or baked into slides. Raw first-draft AI Chinese is never the final deliverable — the user flags AI-flavored 中文 on sight. Does NOT apply to text copied verbatim from the user's source (that's contract #1's territory). See Step 1.5b and `[[feedback_dezh_ai_via_humanizer_zh]]`.
+9. **Single-writer invariant + no sentinels**: at any moment, AT MOST ONE agent may be writing a given artifact file — this rule covers ANY file a builder/converter/fix agent will write to disk (`build_pptx.js`, `index.html`, `src/tokens.css`, and anything else produced; don't assume only these three are special). Before dispatching any file-writing agent, read `docs/WRITERS.md`: if a row for that file has `status: active`, you MUST NOT dispatch a second one — either wait for it, or TaskStop/kill it and clear its row first. Two agents writing the same file = last-write-wins corruption, the exact 2026-07-23 pptx wreck. **`docs/WRITERS.md` format + lifecycle (mandatory, or the registry rots into a rubber stamp):** one row per active write, e.g.
+   ```
+   file: build/build_pptx.js
+   writer: <agentId>
+   dispatched_at: <ISO8601>
+   status: active
+   ```
+   The **orchestrator** owns this file (not the writer agents): set `status: active` at dispatch; the moment the agent returns AND you've `ls`-confirmed its output landed, set that row to `status: done` (or delete it); if you TaskStop/kill an agent, delete its row immediately. A row is only a valid block while `status: active` — never let a `done`/stale row wrongly block a legitimate new dispatch. **Every builder/pptx/fix dispatch prompt MUST state: "the ONLY signal of completion is the output file existing on disk (ls-verifiable) — you are FORBIDDEN from spawning a sentinel, calling Monitor, or telling yourself 'I'll wait for the notification' and returning; that is not done, that is abandoning the task."** Agents that "wait for a notification" instead of producing the file burn budget and self-report false completion. Verify landed files, not `completed` status — see `[[feedback_verify_agent_output_landed_not_status]]`.
 
 ---
 
@@ -835,6 +843,8 @@ ScheduleWakeup(
 
 ## Phase 5 — HTML → PPT
 
+> ⚠️ **Single-writer + no-sentinel (contract #9) applies hardest here.** The pptx builder script (`build/build_pptx.js`) is ONE file. Register its writer in `docs/WRITERS.md`, dispatch exactly one builder, and put in its prompt: "completion = the .pptx + render JPGs exist on disk (you ls them before returning); no sentinels, no 'waiting for notification'." If you think the builder died and want to re-dispatch, first prove it dead by the three probes in contract #4 (jsonl stalled ≥90s AND no output file AND process gone) — otherwise you'll race two builders onto the same script.
+
 **Delegate to pptx skill.** Architecture decision per page (decided automatically):
 
 | Page type | Strategy |
@@ -899,7 +909,7 @@ Both passes use the same render pipeline (`soffice + pdftoppm → build/full-NN.
 
 **⚠️ Mandatory sharding for speed**: a single reviewer agent inspecting N images reads them serially — and serial image reads dominate wall-clock time. Lived measurement: one Pass 1 agent on 9 images took **17 minutes**; the same prompt re-run on the same 9 images via 3 parallel agents (3 images each) took **under 30 seconds total**. The image-read budget is per-agent, not per-pass.
 
-**Sharding rule**: cap each Pass 1 reviewer at **≤ 4 images**. Compute shard count as `ceil(N / 4)`. Dispatch all shards in a SINGLE message with multiple Agent tool calls in parallel (not sequential). Each shard runs the same prompt below over its slice of pages; the orchestrator aggregates findings after all shards return.
+**Sharding rule**: cap each Pass 1 reviewer at **≤ 4 images** (this is a HARD cap, not a suggestion — for WHY, see "Known orchestration failure modes" #3 below: a reviewer handed more than 4 images overloads context and hallucinates defects). Compute shard count as `ceil(N / 4)`. Dispatch all shards in a SINGLE message with multiple Agent tool calls in parallel (not sequential). Each shard runs the same prompt below over its slice of pages; the orchestrator aggregates findings after all shards return.
 
 Example: 9-page deck → 3 shards × 3 pages each, all dispatched together. 14-page deck → 4 shards (4 + 4 + 3 + 3). Never give a single Pass 1 agent more than 4 pages.
 
@@ -961,6 +971,15 @@ This was added after a real bug: P02's TOC right-side panel said "07 CHAPTERS / 
 - Not optional polish — see Hard contract #6. If you're tempted to skip "because the build script succeeded", re-read the contract.
 - Not the user's job — asking "does this look OK?" to a user with no rendered context is outsourcing your own QA. Run the passes first, then surface any unresolvable issues.
 
+### Known orchestration failure modes (pre-mortem — read before dispatching Phase 5/6 agents)
+
+These are real wrecks from prior runs. Each is a trap you can avoid by knowing it exists *before* it bites:
+
+1. **Re-dispatch racing a still-alive agent** → two agents write the same file, last-write-wins corruption. Guard: contract #4's three-probe death test + contract #9's `docs/WRITERS.md` registry. "It's been quiet a while" is NOT death.
+2. **Sentinel / "waiting for notification" false completion** → an agent spawns a watcher and returns `completed` without producing anything. Guard: contract #9's dispatch-prompt clause; verify the file on disk (`ls`), never trust `completed` status alone.
+3. **Reviewer over-reading images → hallucinated bugs.** A reviewer handed > 4 images per shard overloads context and invents defects (real case: font faux-bold synthesis on 宋体/Songti-without-Bold-weight was misread as a "textbox written twice / double-print" bug, triggering a needless fix round). Guard: HARD-cap Pass 1 reviewers at ≤ 4 images (already mandated above — actually enforce it); when a reviewer reports a systemic rendering bug, the orchestrator VERIFIES it firsthand (read the actual render + check the generator source/XML) before dispatching a fix, because a fix for a phantom bug wastes a full cycle. Two independent signals disagreeing (reviewer says "double-print", generator says "single addText") = orchestrator adjudicates by looking, does not just believe the louder one.
+4. **Faux-bold ghosting is a viewer artifact, not a file bug.** CJK serif fonts lacking a true Bold weight (Songti SC / STSong) get synthesized bold by some PPT viewers — a slight offset overlay that reads as "ghosting/double text". It does NOT reproduce across renderers and is not in the file. Before "fixing" ghosting, render with a second engine (e.g. qlmanage vs soffice) to confirm; the real fix, if wanted, is a serif face that ships a real Bold weight — a design call for the user, not an auto-fix.
+
 ---
 
 ## Iteration mode
@@ -993,7 +1012,7 @@ When `build/*.pptx` exists, the user is asking to tweak an already-shipped deck.
 3. **Apply edit to `index.html`** (Phase 3 partial — only touch affected pages/CSS)
 4. **Re-open `index.html`** for confirm (mini Checkpoint 3)
 5. **Regenerate PPT** — run Phase 5's `node src/build.js`. Never hand-edit `.pptx`; it's regenerable.
-6. **QA scope**: skip Phase 6 full re-QA for small patches; run reviewer agent only on affected pages for structural changes.
+6. **QA scope**: never skip QA entirely (contract #6 covers iterations too) — for a small patch run a LIGHTWEIGHT reviewer pass on the affected pages only (not the full 2-pass QA); for a structural change run the full 2-pass QA. "Small" = text/color/position tweak with no layout-engine change.
 7. **Commit** the iteration as a new commit on top of the existing git history.
 
 ### Critical rule
