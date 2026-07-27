@@ -582,9 +582,26 @@
     };
   }
 
+  /* ── 版式自述（供目录 / 自动选型使用） ─────────────────────── */
+
+  /**
+   * 版式元信息。
+   * @returns {{name:string, zhName:string, dataShape:string, whenToUse:string}}
+   */
+  function describe() {
+    return {
+      name: 'radial',
+      zhName: '放射思维导图',
+      dataShape: '{title?, root: {text, note?, emphasis?, children: [...]}}（嵌套树，也可直接给根节点）',
+      whenToUse: '中心发散：一个主题向四周辐射出若干并列分支。品牌关键词、能力地图、'
+        + '议题拆解。不适合有明确先后（用 flow）或上下级落差（用 bilateral）的内容；'
+        + '一级分支多于 4 个、层深 3 层以上时 bilateral 更省地方。',
+    };
+  }
+
   global.DIAGRAM_LAYOUTS = global.DIAGRAM_LAYOUTS || {};
   global.DIAGRAM_LAYOUTS.radial = {
-    render,
+    render, describe,
     layout: layoutRadial,
     // 导出内部件供单测 / 其他版式复用
     polar, isRightSide, edgePoint, radialLink, planRadii, relaxLayer, drawText,

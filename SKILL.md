@@ -299,6 +299,7 @@ This is the make-or-break step for the whole pipeline. If Phase 3 builders are w
 | `signature` | Small text at slide bottom (author/date/page) | Footer-style |
 | `image_frame` | An image with caption underneath | Image + caption pair |
 | `chart` | A chart-image whose data was extracted in Step 1.4 | 按 Step 3.7 从图型库选型并渲染 |
+| `diagram` | 结构/关系示意图（层级、因果、流程、包含、分组、发散），非数值数据 | 按 Step 3.8 从版式库选型并渲染 |
 
 If the agent can't confidently classify a section, **default to `paragraph` + mark `confidence: low`** in the JSON. Don't block on uncertainty; the QA pass and Checkpoint 1 will catch misclassifications.
 
@@ -866,6 +867,115 @@ Then re-check: if thickening and enlarging makes elements occlude each other or 
 
 Keep the `obsReveal` scroll-in animation in the HTML preview (Phase 4) — it costs nothing and the deck is browsed live. Phase 5 screenshots the chart in its settled end state, so animation never reaches the `.pptx`. See Phase 5's chart-page strategy.
 
+### Step 3.8 — 结构图渲染（结构/关系图走版式库）
+
+**Trigger**：满足任一条即走这一步，builder 不许手绘结构图、不许贴原图截图。
+
+- 任一 `slides/p{NN}.json` 里有 section 的 `role: diagram`
+- `docs/OUTLINE.md` 里某页被标为结构页 / 关系页 / 体系页
+- 页面内容语义上是**层级 / 因果 / 流程 / 包含 / 分组 / 发散**关系，而不是数值数据
+
+**与 Step 3.7 的分工（一句话判据）**：**这页要传达的是数字大小，还是要素之间的关系？** 数字 → 3.7 图表；关系 → 3.8 版式。「四个季度的营收」是 3.7；「四个部门的从属结构」是 3.8。两者都要就拆成两块，别混在一张图里。
+
+版式库在 `~/.claude/skills/p2h2p/reference/diagrams/` —— 7 种结构图版式（金字塔 / 同心圆 / 鱼骨 / 流程 / 分组 / 放射 / 左右树），选型目录在 `reference/diagrams/catalog.md`。
+
+#### ✅ 许可证 — 本能力可商用，与 Step 3.7 相反
+
+**Step 3.7 的 PolyForm Noncommercial 硬闸不适用于本步骤。** 结构图版式库的渲染代码是 p2h2p 自己写的，`vendor/` 下的两个第三方库是 **d3-hierarchy（ISC）** 和 **non-layered-tidy-tree-layout（MIT）**，两者都是宽松许可：允许商用、修改、再分发，唯一义务是保留版权声明（文件里已带，原样内联即满足）。
+
+所以**述标 PPT、投标演示、客户交付、销售提案这些 Step 3.7 明令禁止使用图型库的场合，结构图版式库可以放心用**。这正是它相对图表库的优势：p2h2p 最常见的活（述标 / 客户 deck）恰好是图表库被禁的场景，而结构页在这类 deck 里占比很高。不要因为读过 3.7 的商用闸门就连 3.8 一起跳过。来源与许可全文见 `reference/diagrams/vendor/PROVENANCE.md`。
+
+#### 加载顺序（写错就跑不起来）
+
+```html
+<script src="../charts/deck-tokens.js"></script>              <!-- 必须最先 -->
+<script src="diagram-tokens.js"></script>
+<script src="vendor/non-layered-tidy-tree-layout.js"></script> <!-- 树布局算法本体 -->
+<script src="vendor/d3-hierarchy.min.js"></script>             <!-- 只有 radial 要 -->
+<script src="layout-core.js"></script>
+<script src="layouts/radial.js"></script>                      <!-- 见下方注意事项 -->
+<script src="layouts/xxx.js"></script>                         <!-- 再引本页要用的版式 -->
+```
+
+三处容易写错的地方：
+
+1. **`deck-tokens.js` 在 `reference/charts/` 目录下**，不在 `diagrams/` 里 —— 结构图和图表共用同一份 deck token 实现，路径是 `../charts/deck-tokens.js`。
+2. **两个 vendor 库的顺序是 tidy-tree 在前、d3-hierarchy 在后**（`layout-core.js` 要在两者都就位后才加载）。d3-hierarchy 只有放射图用得上，其余版式可以不引。
+3. **`layouts/radial.js` 要排在其他版式之前**。除放射图外的 5 种版式都调用 `DIAGRAM_LAYOUTS.radial.nodeStyleAA` 做 AA 对比度兜底。这是**软依赖**——radial 缺席时会静默退回 `T.nodeStyle(depth)`，图照样画得出来，但**颜色和引了 radial 时不一样**，同一份数据换版式颜色就变了。所以哪怕本页只用金字塔，也把 radial.js 一起引上。
+
+单文件 deck（Phase 5 要 puppeteer 截图导 PPT，产物必须自包含）**建议把这几个文件直接内联进 `<script>`**，不留外部引用。
+
+#### 调用约定
+
+```js
+const res = await DIAGRAM_LAYOUTS[版式名].render(svgEl, data, { scope: cardEl });
+```
+
+- **`render` 是 async，必须 `await`**。内部要等字体就绪才能测量中文宽度，漏了 `await` 拿到的是 Promise，图也可能在字体加载完成前量偏。
+- `data` 传**已解析的对象**（`slides/p{NN}.json` 里本来就是 JSON），不是 YAML 字符串。catalog 里的 YAML 只是书写形态。
+- `opts.scope` 传承载这张图的卡片元素——配色从它身上的 CSS 变量取，见下方调色规则。
+- 返回值 `{nodes, bounds, viewBox, projection, ...}`，`projection` 是投屏硬闸的修正报告，必须读，见下。
+
+#### AI 自动选版式的判断规则
+
+按顺序过一遍，**第一条命中就定版式**；全都不命中说明这页大概不是结构页，回去确认是不是该走 3.7 或纯文字排版。
+
+| 判据（可判定） | 版式 |
+|---|---|
+| 数据是 **3–6 层递进**、每层一个概念、上层建立在下层之上（指标体系、战略—战术—执行） | **金字塔 pyramid** |
+| 层与层是**包含 / 嵌套**关系（外层裹住内层），无高低之分，3–5 层 | **同心圆 concentric** |
+| 内容里出现「**原因 / 因素 / 导致 / 影响 / 归因 / 偏差**」这类因果词，且指向**单一结果**，原因分了大类 | **鱼骨 fishbone** |
+| 有明确**先后顺序**：步骤编号、「先…再…」「第一步 / 第二阶段」、箭头链路 | **流程 flow** |
+| 若干**并列主题各带要点**，组之间无层级也无先后（服务内容、三大板块） | **分组 grouped** |
+| **中心一个主题**向外发散多分支，分支之间并列、无先后（关键词地图、议题拆解） | **放射 radial** |
+| 是**嵌套树**（数据里有 `children`）且**一级分支 ≥5** 或层深 ≥3，需要视觉平衡塞进 16:9 | **左右树 bilateral** |
+
+两条前置分流，能砍掉一半误判：
+
+- **先看数据口径**。数据里有 `children` 嵌套 → 只在 radial / bilateral 之间选；数据是一层平铺的列表 → 只在 pyramid / concentric / fishbone / flow / grouped 之间选。
+- **再看关系类型**，不看题材。"这页讲战略"不是选金字塔的理由，"这页的数据是 3–6 层递进"才是。
+
+**用户可以在数据里写 `layout: xxx` 覆写自动判断，覆写优先，不再跑上表。** 值取版式英文名（`pyramid` / `concentric` / `fishbone` / `flow` / `grouped` / `radial` / `bilateral`）。覆写与自动判断结果不一致时，按覆写执行，并在 `docs/AUTO_DECISIONS.md` 记一行"P{NN} 版式由数据覆写为 xxx（自动判断为 yyy）"。
+
+七种版式的完整数据格式、姊妹关系（什么时候该换用另一种）、各自的已知限制，见 `reference/diagrams/catalog.md`。参考实现和"这样的数据出这样的图"的对照，见 `reference/diagrams/gallery.html`。
+
+#### ⚠️ Hard gate — 投屏可读性
+
+和 3.7 同一条理由：deck 是几米外投屏看的。`render` 收尾会自己调 `DIAGRAM.enforceProjection(svg)`，把线宽顶到 `≥1.5px`、SVG 字号顶到 `≥11px`，**builder 必须读返回值 `res.projection` 并检查修正数量**：
+
+```js
+if (res.projection.fixed > 0) console.warn('投屏修正', res.projection);
+```
+
+- `fixed === 0` → 版式和内容量匹配，通过。
+- `fixed` 少量（个位数，多是最深一层的小字）→ 可接受。
+- **`fixed` 很大（几十项，或 `details` 里出现大量 font-size 修正）→ 版式选错了，内容太密。** 顶字号只是把字撑大，撑大后元素会互相压。正确做法是**换更粗放的版式**（层级树 → 分组图；鱼骨 8 根刺 → 拆成两页）或**拆页**，绝不交一张"修好了"的乱图。
+
+配合 catalog 里各版式的已知限制看：金字塔 >6 层、鱼骨 >6 刺、流程 >9 步、分组 >4 组折网格，都是密度警戒线。
+
+#### 调色规则 — 与 Step 3.7 同一条原则
+
+- **颜色全部来自当前 deck 的 CSS 变量**，通过 `DIAGRAM.fromDeck(scope)` 取（读 `--color-primary` / `--color-bg` / `--color-ink`，兼容 `--primary` / `--bg` / `--ink` 等别名），再生成 9 级明度阶。
+- **不许在版式调用处写死颜色**。版式文件内部本来就没有硬编码色值；builder 也不许用 `opts` 塞死色。要换配色就改 deck 的 tokens，图自己跟着变。
+- **深色底 deck 自动反向**：`fromDeck` 判定 `isDark` 后自己挑字色，并做 AA 对比度兜底，不用手工干预。
+- 与 3.7 的 "deck tokens 覆盖上游调色板" 是同一条原则的两个落点。
+
+#### 结构性 token
+
+- `rnd()` 确定性伪随机，**`Math.random()` 同样禁止** —— 刷新必须复现同一张图，否则 HTML 预览和 PPT 截图对不上。
+- 布局坐标全部解析求解，不用力导向 / 物理模拟（鱼骨图的注释里专门解释了为什么不引 d3 力导向：每次刷新形状不同、导出 PPT 不可复现）。
+- 畸形数据（`null` / 数字 / 布尔 / 空文字）被静默跳过，不生成空白幽灵盒子。所以**图上条数和数据条数对不上时，先查数据里有没有空洞**——不会报错也不会提示。
+
+#### Animation
+
+和 3.7 一致：HTML 预览（Phase 4）保留入场动画，Phase 5 截其**静止终态**，动画不会进 `.pptx`。
+
+#### 导出 PPT 的口径
+
+Phase 5 截图时，**结构图与图表同口径**：截图容器的 @2x PNG，**整张图作为一张 PNG 贴进 pptx**，页面其余部分仍走原生文本框。不做原生可编辑形状（不用 pptxgenjs 的 `addShape` 逐个还原节点和连线）——那样既还原不了梯形/环带/斜刺这些路径，也会让 PPT 与用户在 Checkpoint 3 已经批准的 HTML 长得不一样。见 Phase 5 的 chart-page 策略表。
+
+**Output**：本步产出的是 `index.html` 里结构页的完整 SVG 结构图（含内联的版式库脚本），以及 `docs/AUTO_DECISIONS.md` 里每张结构图的一行记录：页码、选中的版式、是自动判断还是 `layout:` 覆写、`projection.fixed` 的修正数。
+
 ### Universal rules (inherited from beautiful-html-templates SKILL.md)
 - CJK font stack: `Noto Sans SC` → `微软雅黑` → `PingFang SC`
 - Cancel English-only typography on CJK (`.cjk-body` override)
@@ -917,9 +1027,11 @@ ScheduleWakeup(
 |---|---|
 | Cover / chapter divider / colophon | PNG background (hide-text + Chrome screenshot) + native textbox overlays |
 | Card grids / lists / tables (text-heavy) | Pure pptxgenjs native shapes |
-| Data charts (Step 3.7 library charts) / complex viz (clip-path / SVG / rotated) | @2x PNG screenshot of the **chart container only** + native textboxes for the rest of the page |
+| Data charts (Step 3.7 library charts) / 结构图 (Step 3.8 版式库) / complex viz (clip-path / SVG / rotated) | @2x PNG screenshot of the **chart / diagram container only** + native textboxes for the rest of the page |
 
-### Chart pages — screenshot the chart, keep the text native
+### Chart pages / 结构图 pages — screenshot the graphic, keep the text native
+
+结构图（Step 3.8）与图表同口径：**整张图作为一张 @2x PNG 贴进 pptx**，页面其余部分走原生文本框。不用 pptxgenjs 的 `addShape` 逐个还原节点和连线——梯形、环带、斜刺这些路径还原不出来，且会让 PPT 与用户在 Checkpoint 3 已批准的 HTML 长得不一样。下面的截图流程对结构图同样适用（把 `.chart` 换成结构图容器的选择器）。
 
 Charts built in Step 3.7 are hand-written SVG or ECharts canvas. pptxgenjs's native chart API cannot reproduce them (no equivalent for custom SVG paths, radial/blob layouts, or ECharts custom series), and re-approximating them with `addChart` yields a different-looking chart than the HTML the user already approved at Checkpoint 3. So: **screenshot the chart, stay native everywhere else.**
 
@@ -1130,6 +1242,7 @@ When Phase 6 completes (especially after long autonomous runs), write `docs/MORN
 - **pptxgenjs detail**: `~/.claude/skills/pptx/pptxgenjs.md`
 - **Existing PPT editing (alternative path)**: `~/.claude/skills/pptx/editing.md`
 - **Chart type catalog + gallery implementations (Step 3.7)**: `~/.claude/skills/p2h2p/reference/charts/catalog.md`, origin/licensing in `~/.claude/skills/p2h2p/reference/charts/PROVENANCE.md`
+- **Diagram layout catalog + gallery (Step 3.8)**: `~/.claude/skills/p2h2p/reference/diagrams/catalog.md`, live reference page `~/.claude/skills/p2h2p/reference/diagrams/gallery.html`, vendor origin/licensing (ISC + MIT, commercial use OK) in `~/.claude/skills/p2h2p/reference/diagrams/vendor/PROVENANCE.md`
 
 This skill orchestrates; those skills do the work. When in doubt about a specific technical detail (e.g., how pptxgenjs handles fonts), defer to the underlying skill.
 

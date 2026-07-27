@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>结构图版式库 · 七种版式参考实现</title>
+<style>
+  *{box-sizing:border-box}
+
+  /* ── 三套配色主题。切换器只改 <body> 上的 class，
+        版式代码一行没动，图自己跟着变 —— 这是本页的核心演示点。 ── */
+  body.t-warm{
+    --color-primary:#B4522A;
+    --color-bg:#FBF6EE;
+    --color-ink:#2A1C12;
+    --page-bg:#F3EDE2;
+    --page-ink:#3B2A1C;
+    --rule:rgba(43,28,18,.13);
+    --code-bg:#FFFDF8;
+    --deck-font:"Songti SC","Noto Serif SC",Georgia,serif;
+  }
+  body.t-cool{
+    --color-primary:#5AA9E6;
+    --color-bg:#101826;
+    --color-ink:#E6EDF7;
+    --page-bg:#0A0F18;
+    --page-ink:#D8E2F0;
+    --rule:rgba(230,237,247,.14);
+    --code-bg:#0F1826;
+    --deck-font:"Helvetica Neue","Noto Sans SC",system-ui,sans-serif;
+  }
+  body.t-grey{
+    --color-primary:#4A4A48;
+    --color-bg:#FFFFFF;
+    --color-ink:#1B1B19;
+    --page-bg:#EDECE8;
+    --page-ink:#25251F;
+    --rule:rgba(27,27,25,.12);
+    --code-bg:#FAFAF8;
+    --deck-font:"Inter","Noto Sans SC","PingFang SC",system-ui,sans-serif;
+  }
+
+  body{
+    margin:0;
+    padding:0 0 72px;
+    background:var(--page-bg);
+    color:var(--page-ink);
+    font-family:"Noto Sans SC","PingFang SC",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    transition:background .35s ease,color .35s ease;
+  }
+
+  .wrap{max-width:1080px;margin:0 auto;padding:0 32px}
+
+  /* ── 页眉 ───────────────────────────────────────────── */
+  header{padding:64px 0 30px}
+  h1{
+    font-size:34px;line-height:1.22;margin:0 0 12px;
+    letter-spacing:-.02em;font-weight:700;
+  }
+  .lede{
+    font-size:15.5px;line-height:1.75;margin:0;max-width:60ch;opacity:.7;
+  }
+  .lede code{
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:13px;padding:1px 5px;border-radius:4px;
+    background:var(--code-bg);border:1px solid var(--rule);
+  }
+
+  /* ── 配色切换器 ─────────────────────────────────────── */
+  .switcher{
+    position:sticky;top:0;z-index:20;
+    margin-top:34px;padding:14px 0 13px;
+    background:color-mix(in srgb,var(--page-bg) 88%,transparent);
+    backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--rule);
+  }
+  .switcher .inner{
+    max-width:1080px;margin:0 auto;padding:0 32px;
+    display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  }
+  .switcher .lbl{
+    font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;
+    font-weight:600;opacity:.5;
+  }
+  .themes{display:flex;gap:8px;flex-wrap:wrap}
+  .themes button{
+    display:flex;align-items:center;gap:8px;
+    font:inherit;font-size:13px;font-weight:500;
+    padding:7px 13px 7px 9px;border-radius:999px;cursor:pointer;
+    color:inherit;background:transparent;
+    border:1px solid var(--rule);
+    transition:border-color .2s ease,background .2s ease;
+  }
+  .themes button:hover{border-color:color-mix(in srgb,var(--page-ink) 34%,transparent)}
+  .themes button[aria-pressed="true"]{
+    border-color:color-mix(in srgb,var(--page-ink) 52%,transparent);
+    background:color-mix(in srgb,var(--page-ink) 7%,transparent);
+  }
+  .dots{display:inline-flex;gap:3px}
+  .dots i{width:11px;height:11px;border-radius:50%;display:block;
+          border:1px solid rgba(128,128,128,.32)}
+
+  /* ── 版式条目 ───────────────────────────────────────── */
+  .item{padding:56px 0 8px;border-top:1px solid var(--rule)}
+  .item:first-of-type{border-top:none}
+
+  .item-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+  .idx{
+    font-size:12px;font-weight:600;letter-spacing:.1em;opacity:.42;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  .item h2{font-size:23px;font-weight:700;letter-spacing:-.015em;margin:0}
+  .en{
+    font-size:13px;font-weight:500;opacity:.45;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  .shape{
+    font-size:14.5px;line-height:1.7;margin:0 0 26px;
+    max-width:62ch;opacity:.72;
+  }
+  .shape b{font-weight:600;opacity:.95}
+
+  /* 图 + 数据：窄图并排两栏，宽图上下堆叠 */
+  .pair{
+    display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);
+    gap:26px;align-items:start;
+  }
+  .pair.stack{grid-template-columns:minmax(0,1fr);gap:20px}
+
+  /* 高瘦的图（金字塔/同心圆）在窄栏里会缩得很小，给个居中限宽让它撑开 */
+  .diagram-card.tall svg{max-width:430px;margin:0 auto}
+  /* 左右树天生很宽，横向铺满后字会小，限一下高度上限更耐读 */
+  .diagram-card.flat svg{max-width:900px;margin:0 auto}
+
+  /* 结构图卡片：这个元素就是 render 的 scope，配色从它身上的
+     CSS 变量取（--color-primary / --color-bg / --color-ink）。 */
+  .diagram-card{
+    background:var(--color-bg);
+    color:var(--color-ink);
+    font-family:var(--deck-font);
+    border-radius:14px;
+    padding:26px 24px;
+    border:1px solid var(--rule);
+    min-height:150px;
+    transition:background .35s ease,color .35s ease;
+  }
+  .diagram-card svg{display:block;width:100%;height:auto}
+
+  .data{min-width:0}
+  .data .cap{
+    font-size:11px;letter-spacing:.13em;text-transform:uppercase;
+    font-weight:600;opacity:.42;margin-bottom:8px;
+  }
+  pre{
+    margin:0;padding:16px 17px;border-radius:12px;overflow-x:auto;
+    background:var(--code-bg);border:1px solid var(--rule);
+    font-family:ui-monospace,SFMono-Regular,Menlo,"Noto Sans Mono CJK SC",monospace;
+    font-size:12.3px;line-height:1.68;
+    white-space:pre;tab-size:2;
+  }
+  pre code{color:inherit;opacity:.86}
+
+  .note{
+    font-size:13px;line-height:1.7;margin:16px 0 0;opacity:.6;max-width:62ch;
+  }
+  .note b{font-weight:600;opacity:.9}
+
+  footer{
+    margin-top:64px;padding-top:26px;border-top:1px solid var(--rule);
+    font-size:13px;line-height:1.8;opacity:.55;
+  }
+  footer code{
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+  }
+
+  @media (max-width:860px){
+    .wrap,.switcher .inner{padding:0 20px}
+    .pair{grid-template-columns:minmax(0,1fr)}
+    h1{font-size:27px}
+  }
+</style>
+</head>
+<body class="t-warm">
+
+<div class="wrap">
+  <header>
+    <h1>结构图版式库</h1>
+    <p class="lede">
+      七种结构/关系版式的参考实现。每种给一份贴合语义的真实数据和它渲染出的图——
+      同一个 <code>render(svg, data, {scope})</code> 入口，颜色字体全部跟着当前 deck 的
+      CSS 变量走，版式代码里没有一处写死的颜色。切换下面的配色试试。
+    </p>
+  </header>
+</div>
+
+<div class="switcher">
+  <div class="inner">
+    <span class="lbl">配色</span>
+    <div class="themes" id="themes"></div>
+    <span class="lbl" id="hint" style="margin-left:auto;letter-spacing:.02em;text-transform:none;font-weight:500"></span>
+  </div>
+</div>
+
+<div class="wrap" id="items"></div>
+
+<div class="wrap">
+  <footer>
+    版式实现见 <code>layouts/*.js</code>，选型目录见 <code>catalog.md</code>，
+    接入规范见 SKILL.md 的 Step 3.8。<br>
+    第三方库：d3-hierarchy（ISC）、non-layered-tidy-tree-layout（MIT），均允许商用，
+    详见 <code>vendor/PROVENANCE.md</code>。
+  </footer>
+</div>
+
+<script src="../charts/deck-tokens.js"></script>
+<script src="diagram-tokens.js"></script>
+<script src="vendor/non-layered-tidy-tree-layout.js"></script>
+<script src="vendor/d3-hierarchy.min.js"></script>
+<script src="layout-core.js"></script>
+<script src="layouts/radial.js"></script>
+<script src="layouts/bilateral.js"></script>
+<script src="layouts/pyramid.js"></script>
+<script src="layouts/concentric.js"></script>
+<script src="layouts/fishbone.js"></script>
+<script src="layouts/flow.js"></script>
+<script src="layouts/grouped.js"></script>
+
+<script src="gallery-data.js"></script>
+</body>
+</html>

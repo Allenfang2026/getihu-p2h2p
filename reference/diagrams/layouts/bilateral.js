@@ -362,9 +362,27 @@
     }
   }
 
+  /* ── 版式自述（供目录 / 自动选型使用） ─────────────────────── */
+
+  /**
+   * 版式元信息。
+   * @returns {{name:string, zhName:string, dataShape:string, whenToUse:string}}
+   */
+  function describe() {
+    return {
+      name: 'bilateral',
+      zhName: '左右分栏树',
+      dataShape: '{title?, root: {text, note?, emphasis?, children: [...]}}（嵌套树，与 radial 同一格式）',
+      whenToUse: '层级展开：根居中、分支左右两侧铺开，比放射图规整、比单向树紧凑，'
+        + '是"一个主题两三层展开要塞进 16:9 一页"最稳的版式。体系结构、组织架构、'
+        + '内容目录。分支少（一级 ≤4）想要发散张力用 radial；只有两层且每支下就是'
+        + '几条要点，用 grouped 更整齐。',
+    };
+  }
+
   global.DIAGRAM_LAYOUTS = global.DIAGRAM_LAYOUTS || {};
   global.DIAGRAM_LAYOUTS.bilateral = {
-    render,
+    render, describe,
     layout: layoutBilateral,
     leafCount, splitSides, hLink,
   };
