@@ -11,12 +11,16 @@
 | `d3-hierarchy.min.js` | d3-hierarchy | 3.1.2 | ISC | 14,828 B | `https://cdn.jsdelivr.net/npm/d3-hierarchy@3.1.2/dist/d3-hierarchy.min.js` |
 | `non-layered-tidy-tree-layout.js` | non-layered-tidy-tree-layout | 2.0.2 | MIT | 5,599 B | `https://cdn.jsdelivr.net/npm/non-layered-tidy-tree-layout@2.0.2/dist/non-layered-tidy-tree-layout.js` |
 
-下载日期：**2026-07-28**。两个文件均为原样字节，未做任何修改。
+下载日期：**2026-07-28**。
 
-ISC 和 MIT 都是宽松许可：允许商用、修改、再分发，唯一义务是保留版权声明。两个文件的头部/内部已带各自的版权行，随文件一起分发即满足条件。
+**改动说明**：`d3-hierarchy.min.js` 为原样字节，未做任何修改。`non-layered-tidy-tree-layout.js` 仅在文件顶部**新增一行版权声明注释**（上游压缩产物没带），代码本体一字未动——加注释是为了履行 MIT 的保留声明义务，不是改功能。
 
-- d3-hierarchy：`Copyright 2010-2021 Mike Bostock`（ISC）
-- non-layered-tidy-tree-layout：`Copyright (c) 2019 Michael Wong`（MIT）
+ISC 和 MIT 都是宽松许可：允许商用、修改、再分发，唯一义务是保留版权声明。
+
+- **d3-hierarchy**：`Copyright 2010-2021 Mike Bostock`（ISC）。压缩产物第一行自带版权注释，原样分发该文件即满足义务。
+- **non-layered-tidy-tree-layout**：`Copyright (c) 2019 Michael Wong`（MIT）。上游 npm 包的压缩 UMD **不含任何内嵌版权注释**（全文 grep 不到 `Copyright`）。为免"单独分发这个 .js 就不带声明"，我们在文件顶部补了一行声明注释——这是本目录对上游文件唯一的改动，见下方"改动说明"。
+
+> 别把"文件在这个仓库里"当成合规的全部理由：MIT 的义务跟着**文件本身**走，谁把它单拎出去分发，谁就要保证那一份带着声明。
 
 ## 二、各自干什么、为什么选它
 

@@ -12,7 +12,7 @@
 
 # Diagram self-test harness — dev-only, not part of the shipped skill.
 # Regenerate by opening it in a browser; see reference/diagrams/vendor/PROVENANCE.md.
-reference/diagrams/_selftest.html
+reference/diagrams/_selftest*.html
 reference/diagrams/*.png
 reference/diagrams/selftest-*.png
 

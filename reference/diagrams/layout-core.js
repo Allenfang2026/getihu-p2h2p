@@ -344,8 +344,19 @@
         : [];
       if (depth < maxDepth) {
         for (let i = 0; i < kids.length; i++) {
-          const c = walk(kids[i], depth + 1, node);
-          c._sibIndex = i;
+          /* 跳过畸形项，不生成"幽灵节点"。
+             上游数据出空洞是很现实的：数组 filter 漏了、JSON 序列化产生
+             null、YAML 里写了个空列表项。放行的话 null 会被转成 text:''
+             的正常节点，占 72×40px 空盒、参与布局、还画连线 —— 图上平白
+             多出看不出内容的空白方块，且没有任何提示。
+             只认对象和字符串；null/undefined/数字/布尔一律丢弃。       */
+          const rawKid = kids[i];
+          if (rawKid == null) continue;
+          const ty = typeof rawKid;
+          if (ty !== 'object' && ty !== 'string') continue;
+
+          const c = walk(rawKid, depth + 1, node);
+          c._sibIndex = node.children.length;
           node.children.push(c);
         }
       }
