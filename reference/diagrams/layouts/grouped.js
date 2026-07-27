@@ -65,6 +65,7 @@
    */
   function normalizeGroups(raw) {
     const out = [];
+    if (!Array.isArray(raw)) return out;                    // 类型不对就当空数组
     (raw || []).forEach(item => {
       if (item == null) return;
       const ty = typeof item;
@@ -74,7 +75,8 @@
         : (o.text != null ? String(o.text) : (o.label != null ? String(o.label) : ''));
       if (!title.trim()) return;
       const items = [];
-      (o.items || o.points || o.children || []).forEach(it => {
+      const rawItems = o.items || o.points || o.children || [];
+      (Array.isArray(rawItems) ? rawItems : []).forEach(it => {   // 类型不对就当空数组
         if (it == null) return;
         const t2 = typeof it;
         if (t2 !== 'object' && t2 !== 'string') return;

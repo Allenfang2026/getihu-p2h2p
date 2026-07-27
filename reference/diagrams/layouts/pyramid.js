@@ -64,6 +64,7 @@
    */
   function normalizeLayers(raw) {
     const out = [];
+    if (!Array.isArray(raw)) return out;                    // 类型不对就当空数组
     (raw || []).forEach(item => {
       if (item == null) return;
       const ty = typeof item;
@@ -72,7 +73,8 @@
       const text = o.text != null ? String(o.text) : (o.label != null ? String(o.label) : '');
       if (!text.trim()) return;                            // 空文字层等于没内容
       const items = [];
-      (o.items || o.points || []).forEach(it => {
+      const rawItems = o.items || o.points || [];
+      (Array.isArray(rawItems) ? rawItems : []).forEach(it => {   // 类型不对就当空数组
         if (it == null) return;
         const t2 = typeof it;
         if (t2 !== 'object' && t2 !== 'string') return;

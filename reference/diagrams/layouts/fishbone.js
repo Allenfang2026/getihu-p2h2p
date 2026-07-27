@@ -61,6 +61,7 @@
    */
   function normalizeBones(raw) {
     const out = [];
+    if (!Array.isArray(raw)) return out;                    // 类型不对就当空数组
     (raw || []).forEach(item => {
       if (item == null) return;
       const ty = typeof item;
@@ -69,7 +70,8 @@
       const text = o.text != null ? String(o.text) : (o.label != null ? String(o.label) : '');
       if (!text.trim()) return;
       const causes = [];
-      (o.causes || o.children || o.items || []).forEach(c => {
+      const rawCauses = o.causes || o.children || o.items || [];
+      (Array.isArray(rawCauses) ? rawCauses : []).forEach(c => {  // 类型不对就当空数组
         if (c == null) return;
         const t2 = typeof c;
         if (t2 !== 'object' && t2 !== 'string') return;

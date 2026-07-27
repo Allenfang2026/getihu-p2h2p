@@ -59,6 +59,7 @@
    */
   function normalizeSteps(raw) {
     const out = [];
+    if (!Array.isArray(raw)) return out;                    // 类型不对就当空数组
     (raw || []).forEach(item => {
       if (item == null) return;
       const ty = typeof item;
