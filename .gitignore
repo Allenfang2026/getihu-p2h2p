@@ -10,6 +10,12 @@
 *.pptx
 *.tmp
 
+# Diagram self-test harness — dev-only, not part of the shipped skill.
+# Regenerate by opening it in a browser; see reference/diagrams/vendor/PROVENANCE.md.
+reference/diagrams/_selftest.html
+reference/diagrams/*.png
+reference/diagrams/selftest-*.png
+
 # Third-party chart library — NOT redistributable.
 # reference/charts/{catalog.md,templates/} are copied verbatim from
 # lieflat-charts (PolyForm Noncommercial 1.0.0). That license permits
