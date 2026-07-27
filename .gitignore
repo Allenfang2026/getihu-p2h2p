@@ -9,3 +9,11 @@
 /tmp/
 *.pptx
 *.tmp
+
+# Third-party chart library — NOT redistributable.
+# reference/charts/{catalog.md,templates/} are copied verbatim from
+# lieflat-charts (PolyForm Noncommercial 1.0.0). That license permits
+# noncommercial USE but not redistribution, so this public repo must not
+# carry them. Step 3.7 fetches them on first use — see reference/charts/SETUP.md.
+reference/charts/catalog.md
+reference/charts/templates/

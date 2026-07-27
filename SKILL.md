@@ -298,7 +298,7 @@ This is the make-or-break step for the whole pipeline. If Phase 3 builders are w
 | `card_title` | Heading inside a visually grouped block | Card header |
 | `signature` | Small text at slide bottom (author/date/page) | Footer-style |
 | `image_frame` | An image with caption underneath | Image + caption pair |
-| `chart` | A chart-image whose data was extracted in Step 1.4 | Re-render natively OR embed PNG |
+| `chart` | A chart-image whose data was extracted in Step 1.4 | 按 Step 3.7 从图型库选型并渲染 |
 
 If the agent can't confidently classify a section, **default to `paragraph` + mark `confidence: low`** in the JSON. Don't block on uncertainty; the QA pass and Checkpoint 1 will catch misclassifications.
 
@@ -638,6 +638,7 @@ Message to user:
 > 1. **大纲** `docs/OUTLINE.md` — N 页，可改顺序/增删/重命名；`Notes` 列标了 confidence-low 的页码
 > 2. **图片决策** `docs/ASSET_PLAN.md` — 每张图已默认填 KEEP/DUOTONE/DROP/CHART
 > 3. **图表数据** `docs/TABLES.md` — 从截图 OCR 出的数据点，请核对 medium-confidence 的
+>    （若本 deck 有图表：顺带确认一句这份 deck **是否商用**（客户交付/述标/对外提案）。商用则 Step 3.7 的图型库不可用，改走 Chart.js/ECharts 自绘 — 见 Step 3.7 Hard gate #0）
 > 4. **字体决策** `docs/FONTS.md` — 原 PPT 用了哪些字体 + 默认建议；可改 KEEP / KEEP-with-fallback / REPLACE-WITH
 >
 > 仅当 OUTLINE `Notes` 列提示某页 confidence:low 时，再打开对应 `slides/p{NN}.json` 检查 role 推断对不对。其它页 JSON 不需要看。
@@ -800,6 +801,71 @@ Apply the decisions from `docs/ASSET_PLAN.md`:
 
 Each builder's successful result gets its own `phase 3: built p{N}-p{M}` commit. If a builder cycles through Step 3.3 fixes, commit after the final accepted version. This makes Phase 6 fixes easier to bisect.
 
+### Step 3.7 — 图表渲染（数据图走图型库）
+
+**Trigger**: `docs/TABLES.md` contains any chart data row (produced by Step 1.4's OCR), OR any `slides/p{NN}.json` has a section with `role: chart`. Either signal → this step is mandatory for that page. Builders do NOT freehand a chart and do NOT paste the original screenshot.
+
+The chart library lives at `~/.claude/skills/p2h2p/reference/charts/` — 48 vetted chart implementations (`G1`-`G18` Glance, `L1`-`L15` Lupi, `F1`-`F12` basics, `B1`-`B3` big), copied from the `lieflat-charts` skill. See `reference/charts/PROVENANCE.md` for origin.
+
+#### 🚫 Hard gate #0 — commercial-use check (run BEFORE opening any gallery)
+
+This library is licensed **PolyForm Noncommercial 1.0.0** — the restriction travels with the copied files. Ask one question first:
+
+> **Is this deck used in a for-profit activity?** (paid client deliverable, 述标/投标 presentation, sales or investor pitch, anything billed or sold)
+
+- **Yes → do NOT use this library.** Build the chart directly with Chart.js or ECharts (MIT / Apache-2.0, unrestricted) following the palette + projection rules below. You still get consistent charts; you just don't copy a gallery implementation.
+- **No** (personal use, internal notes, teaching, open-source docs, portfolio) **→ proceed.**
+- **Unsure → ask the user, don't guess.** Log the answer in `docs/AUTO_DECISIONS.md`.
+
+This gate exists because p2h2p's most common jobs (述标 PPT, client decks) are exactly the prohibited case. Full terms + the two escape routes: `reference/charts/PROVENANCE.md`.
+
+#### ⚠️ Library presence check (first use after cloning this skill)
+
+The library is not redistributed with this repo (PolyForm Noncommercial — see gate #0). Verify it is present before opening any gallery:
+
+```bash
+test -f ~/.claude/skills/p2h2p/reference/charts/catalog.md && ls ~/.claude/skills/p2h2p/reference/charts/templates/*.html | wc -l   # expect 6
+```
+
+- **Missing** → this is a first use. Install it per `reference/charts/SETUP.md` (one `git clone` + two `cp`).
+- **Can't or won't install** (offline, commercial deck, license not acceptable) → skip this library entirely and draw the chart with Chart.js / ECharts, still obeying the projection gate and palette rules below.
+
+#### Selection flow (AI picks by data shape — no fixed style ranking)
+
+1. **Read the data's shape first**, not its topic: a few categories compared? a time series? a 100% composition? signed (+/-) values? many-to-one attribution? per-record distribution?
+2. Open `~/.claude/skills/p2h2p/reference/charts/catalog.md` and recall candidates by that shape — all 48 entries are indexed on 数据形状 as the primary key.
+3. **No style priority.** Do NOT prefer Lupi over Glance or vice versa. Pick purely on (a) data shape fit and (b) the projection gate below. The upstream catalog's "先审计 Lupi，两组都不适配才进 Glance" ordering is an artifact of the source skill and does not bind here.
+4. Open the matching gallery in `reference/charts/templates/` (`lupi-gallery.html` / `basics-gallery.html` / `glance-gallery.html` / `big-*.html`), locate the `<div class="card">` block by its 卡内标题 from the catalog to read the markup, then search the `<script>` for the same-named `// ════` comment block to get the render code.
+5. **Adapt that implementation — swap the data, keep the structure.** Never take a chart type as inspiration and then draw your own from scratch; the template IS the deliverable's skeleton.
+
+#### ⚠️ Hard gate — projection legibility
+
+A deck is read on a projector from several meters away. The lieflat library was designed for web/公众号 reading distance — its 0.5-0.7px hairlines and 6.5px labels are literally invisible when projected. After picking an implementation, walk its code and enforce:
+
+| Property in the template | Minimum in a P2H2P deck |
+|---|---|
+| stroke / line width < 1.5px | bump to ≥ 1.5px |
+| SVG text `font-size` < 11px | bump to ≥ 11px |
+| body / label text below 14pt equivalent | bump to ≥ 14pt equivalent |
+
+Then re-check: if thickening and enlarging makes elements occlude each other or labels no longer fit their slots, **the chart type is too fine-grained for projection — go back to step 2 and pick a coarser candidate** (usually a Glance-series `G1`-`G18`, which are built for 3-second reading). Do not ship a chart you "fixed" into a tangle.
+
+#### Palette — deck tokens override the upstream rule
+
+- Chart colors come from THIS deck's `src/tokens.css`, never from the template's own hardcoded palette. Feed the deck's primary + background into `reference/charts/deck-tokens.js`'s `buildLadder(primary, background)` to generate the 9-step lightness ladder, and drive the chart off that ladder.
+- Keep the **lightness-as-data** encoding: the most important series/segment gets the largest lightness delta from the background.
+- **The upstream `lieflat-charts` rule — "只准纸灰+炭黑单色，出现非 ladder 颜色即返工" — does NOT apply in P2H2P and is deliberately repealed here.** A builder that reads `lieflat-charts/SKILL.md` must not import its monochrome mandate; the deck's own tokens win.
+
+#### Structural tokens to preserve
+
+- `rnd()` deterministic pseudo-random — **`Math.random()` is forbidden**; a refresh must reproduce the identical chart, or HTML preview and the PPT screenshot will disagree.
+- Area encodes by `sqrt` (radius ∝ √value), so magnitudes read honestly.
+- Bar charts never break the axis — baseline stays at zero.
+
+#### Animation
+
+Keep the `obsReveal` scroll-in animation in the HTML preview (Phase 4) — it costs nothing and the deck is browsed live. Phase 5 screenshots the chart in its settled end state, so animation never reaches the `.pptx`. See Phase 5's chart-page strategy.
+
 ### Universal rules (inherited from beautiful-html-templates SKILL.md)
 - CJK font stack: `Noto Sans SC` → `微软雅黑` → `PingFang SC`
 - Cancel English-only typography on CJK (`.cjk-body` override)
@@ -851,7 +917,30 @@ ScheduleWakeup(
 |---|---|
 | Cover / chapter divider / colophon | PNG background (hide-text + Chrome screenshot) + native textbox overlays |
 | Card grids / lists / tables (text-heavy) | Pure pptxgenjs native shapes |
-| Data charts / complex viz (clip-path / SVG / rotated) | Full PNG screenshot of the page |
+| Data charts (Step 3.7 library charts) / complex viz (clip-path / SVG / rotated) | @2x PNG screenshot of the **chart container only** + native textboxes for the rest of the page |
+
+### Chart pages — screenshot the chart, keep the text native
+
+Charts built in Step 3.7 are hand-written SVG or ECharts canvas. pptxgenjs's native chart API cannot reproduce them (no equivalent for custom SVG paths, radial/blob layouts, or ECharts custom series), and re-approximating them with `addChart` yields a different-looking chart than the HTML the user already approved at Checkpoint 3. So: **screenshot the chart, stay native everywhere else.**
+
+- Screenshot the **chart container only** at @2x — not the whole page, and never a full-page shot cropped by eye.
+- Get the container's exact rect from the DOM, then feed it to Chrome headless:
+
+```bash
+# 1) read the chart container's rect (CSS px) from the rendered page
+node -e '...page.evaluate(() => { const r = document.querySelector("#p12 .chart").getBoundingClientRect();
+         return {x:r.x, y:r.y, w:r.width, h:r.height}; })...'
+
+# 2) screenshot exactly that rect at 2x device scale
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --disable-gpu \
+  --force-device-scale-factor=2 --window-size=1280,720 \
+  --screenshot="assets/processed/p12_chart@2x.png" \
+  --user-data-dir=/tmp/cr_p2h2p_chart "file:///abs/path/index.html"
+```
+(Puppeteer's `element.screenshot({path, scale:2})` does the same in one call and is preferred when puppeteer is already installed — it clips to the element without a separate rect step.)
+
+- Place the PNG with `addImage` at the same relative position/size the chart occupies in the HTML; every title, axis caption, legend label, and body paragraph **outside** the chart container still renders as a native textbox.
+- **Accepted trade-off**: chart data is not editable inside PowerPoint. Visual fidelity is 100% instead. The user has confirmed this trade; don't re-litigate it or silently fall back to `addChart`.
 
 Build script template (in pptx skill's `pptxgenjs.md`):
 - `src/tokens.js` mirrors `tokens.css` (colors as hex without `#`, fonts as PowerPoint font names). **If the chosen template ships a `tokens.js` (all frontend-slides-ported templates do — check `~/.claude/skills/beautiful-html-templates/source/templates/<slug>/tokens.js`), copy it into the project as the starting point instead of re-deriving from `tokens.css`.** Saves a step and guarantees PPT colors match the HTML preview exactly.
@@ -1040,6 +1129,7 @@ When Phase 6 completes (especially after long autonomous runs), write `docs/MORN
 - **HTML→PPT conversion + pptxgenjs API + visual QA**: `~/.claude/skills/pptx/SKILL.md`
 - **pptxgenjs detail**: `~/.claude/skills/pptx/pptxgenjs.md`
 - **Existing PPT editing (alternative path)**: `~/.claude/skills/pptx/editing.md`
+- **Chart type catalog + gallery implementations (Step 3.7)**: `~/.claude/skills/p2h2p/reference/charts/catalog.md`, origin/licensing in `~/.claude/skills/p2h2p/reference/charts/PROVENANCE.md`
 
 This skill orchestrates; those skills do the work. When in doubt about a specific technical detail (e.g., how pptxgenjs handles fonts), defer to the underlying skill.
 
