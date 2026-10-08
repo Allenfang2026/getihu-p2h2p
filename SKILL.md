@@ -1,6 +1,6 @@
 ---
 name: p2h2p
-description: "End-to-end pipeline for building or rebuilding a slide deck — start from a rough .pptx / text prompt / image (whiteboard photo, handwritten outline, reference screenshot), produce both an editable HTML deck and an editable .pptx. Trigger when the user wants to: (a) rebuild an existing ugly PPT into a beautiful one ('重做这份 PPT', 'rebuild this deck'), (b) make a deck from a rough idea or scribble ('做一份 X 主题的 PPT', 'turn this whiteboard photo into slides'), (c) iterate on a previously generated deck ('改 P05 字号'). This skill orchestrates the [beautiful-html-templates] skill (Phase 2-4) and the [pptx] skill (Phase 5-6); both remain independent and callable directly when only one half is needed. Stops at 3 checkpoints (outline / template / HTML preview) and runs everything else autonomously. P2H2P = PPT → HTML → PPT (any input → HTML middle layer → PPT output)."
+description: "End-to-end pipeline for building or rebuilding a slide deck — start from a rough .pptx / text prompt / image (whiteboard photo, handwritten outline, reference screenshot), produce both an editable HTML deck and an editable .pptx. For product-showcase / concept-proposal decks it can also deliver HTML + PDF without a .pptx. Trigger when the user wants to: (a) rebuild an existing ugly PPT into a beautiful one ('重做这份 PPT', 'rebuild this deck'), (b) make a deck from a rough idea or scribble ('做一份 X 主题的 PPT', 'turn this whiteboard photo into slides'), (c) iterate on a previously generated deck ('改 P05 字号'). This skill orchestrates the [beautiful-html-templates] skill (Phase 2-4) and the [pptx] skill (Phase 5-6); both remain independent and callable directly when only one half is needed. Stops at 3 checkpoints (outline / template / HTML preview) and runs everything else autonomously. P2H2P = PPT → HTML → PPT (any input → HTML middle layer → PPT output)."
 ---
 
 # P2H2P — PPT ↔ HTML ↔ PPT pipeline
@@ -36,10 +36,11 @@ This skill ships the *generic* pipeline. A power user may keep a **private compa
 - User has rough material (text/images/notes) and wants a deck
 - User says "改 P05 字号" on a previously P2H2P-generated deck
 - User wants both HTML preview AND .pptx delivered
+- User wants a product-showcase / concept-proposal deck (HTML first; PDF and/or .pptx) → also follow "Product-showcase decks"
 
 ❌ Don't use:
 - User only wants to *read* a PPT → use markitdown directly
-- User only wants HTML, no PPT → use beautiful-html-templates directly
+- User only wants HTML, no PPT → use beautiful-html-templates directly (exception: product-showcase decks → this skill, see "Product-showcase decks")
 - User has a finished PPT and just wants 1-2 text edits → just edit pptx XML directly via pptx skill
 
 ## Pipeline at a glance
@@ -57,7 +58,7 @@ Phase 1  Content extract  (auto)    — markitdown / vision / read; produce outl
   ⏸️  CHECKPOINT 1: user reviews outline; reorder/add/drop pages
   ↓
 Phase 2  Template picks   (auto)    — beautiful-html-templates: 3 candidate covers
-  ⏸️  CHECKPOINT 2: user picks one
+  ⏸️  CHECKPOINT 2: user picks one (product-showcase decks: 3-cover style gate, see S1)
   ↓
 Phase 3  HTML build       (auto)    — parallel builder subagents + immediate mini-reviewer per builder
   ↓
@@ -75,7 +76,7 @@ OUTPUT  HTML + .pptx + report
 
 1. **Content fidelity = "smart repair"**: original numbers/names/quotations are NEVER altered, paraphrased, summarized, or compressed. English template residue / typos / duplicate punctuation MAY be cleaned. Confirm before greyscaling any photo of living people (inauspicious in Chinese context).
 2. **HTML is the ground truth**: edits go to HTML, then re-generate PPT. `.pptx` is regenerable; never hand-edit it as the source of changes.
-3. **3 checkpoints, no more — and they're async by default**: outline / template / HTML preview. Each times out after 5 minutes and AI proceeds with sensible defaults (see Checkpoint Timeout Policy below). Users can override later via Iteration mode.
+3. **3 checkpoints, no more — and they wait for the user**: outline / template / HTML preview. No timers: each checkpoint waits for the user's reply (see "Checkpoint policy + `--auto` flag" below); only `--auto` skips them. Users can override later via Iteration mode.
 4. **Failure: recursive shard-and-retry — but "dead" is a proven state, never a hunch**. One linear flow, no exceptions — **every re-dispatch (the first retry included) starts by proving the old agent dead**: (1) confirm death by all three probes at once — (a) jsonl transcript stopped growing for ≥ 90s, AND (b) expected output file absent on disk, AND (c) process gone; miss any one → it's alive-but-slow, keep waiting, do NOT re-dispatch. (2) Only once dead-confirmed: retry once at same scope. (3) If that second attempt also dies (same three-probe test) → split scope in half and dispatch new agents recursively (8 pages → 4+4 → 2+2 → 1+1), each hitting this same flow. (4) Only fall back to degraded text-dump rendering on a single page that fails alone. A re-dispatch that races a still-alive agent onto the same file is the single worst failure mode of this skill (see contract #9 + "Known orchestration failure modes" in Phase 6). This minimizes the blast radius of any one failure.
 5. **`git init` is Phase 0.0**: every deck is a git project from second one. Commit per phase. Never `cp foo.html foo.html.bak` as a safety net.
 6. **A build doesn't ship until a reviewer-pass agent sees it**: `node build.js` exiting 0 only proves the code ran — it does NOT prove text fits its container, that 380pt glyphs don't overflow their bbox, that captions don't collide with peak badges, or that adjacent columns aren't 0.3" apart and read as one number. After every build (including iterations), render to JPGs and dispatch a reviewer agent against the actual rendered output before declaring done (for small patches: reviewer on affected pages only; for structural changes: full 2-pass — see Iteration mode step 6). Don't ask the user "does this look ok?" as the first visual check — that's the agent outsourcing its own QA. See Phase 6 for the required reviewer-pass contract.
@@ -92,33 +93,29 @@ OUTPUT  HTML + .pptx + report
 
 ---
 
-## Checkpoint timeout policy + `--auto` flag
+## Checkpoint policy + `--auto` flag
 
-The 3 checkpoints (outline / template / HTML preview) are designed for **async user review** — not synchronous blocking. Timeouts MUST be enforced via real scheduled wakeups, not promised in prose.
+The 3 checkpoints (outline / template / HTML preview) are designed for **async user review**. Per Allen's 2026-08-28 policy (no more timer-based auto-continue for long tasks), checkpoints do NOT auto-fire on a timer and do NOT set any wakeup/loop.
 
-### ⚠️ Hard rule — every checkpoint MUST schedule its own wakeup
+### Hard rule — every checkpoint waits, no timers
 
-The runtime does NOT auto-fire after N minutes. If you post a "等你 / waiting for you" message without calling `ScheduleWakeup`, you will block FOREVER waiting for a user response that may never come. This was a real bug — fixed by mandating the pattern below.
+After posting a checkpoint message, just leave the conversation window open and wait for the user's reply — do not schedule any timer, alarm, or loop. If the user takes a long time to respond, keep waiting; do not silently proceed with default decisions after some elapsed time. This replaces an earlier version of this skill that scheduled a 300-second timed wakeup per checkpoint — that pattern is retired along with the rest of the timer-based heartbeat policy.
 
-**Mandatory pattern** — every time you stop at a checkpoint, do these two things ATOMICALLY in the same response:
+**Pattern** — every time you stop at a checkpoint:
 
 1. Post the checkpoint message to the user (what to review, how to confirm).
-2. Call `ScheduleWakeup` with `delaySeconds: 300` and a prompt that triggers auto-default behavior on fire.
+2. Wait. When the user replies, act on their input. Do not proceed on your own initiative.
 
-```
-ScheduleWakeup(
-  delaySeconds: 300,
-  reason: "Checkpoint N timeout — proceeding with default decisions",
-  prompt: "Checkpoint N (e.g. outline review) timeout fired. Check if user responded
-          since the checkpoint was posted. If yes → continue per their input.
-          If no → log auto-decision to docs/AUTO_DECISIONS.md and proceed to next phase
-          with the documented defaults: [list defaults here]."
-)
-```
+### `--auto` flag — skip checkpoints entirely
 
-If user responds before 300s, just proceed normally — the scheduled wakeup will harmlessly fire later and find the user has already moved on (check git log / latest commit before acting).
+Invoke as `/p2h2p <input> --auto` to bypass all 3 checkpoints — completely unattended run. Don't post checkpoint messages at all; just write defaults to `docs/AUTO_DECISIONS.md` and continue. Useful for:
+- Overnight bulk runs
+- Batch processing multiple decks
+- "Just give me something to start from" workflows
 
-### Default actions per checkpoint (used when wakeup fires)
+In `--auto` mode, the morning report becomes the user's ONLY interface to the result. `--auto` is the only way this skill proceeds without waiting for the user — outside of `--auto`, no checkpoint ever auto-continues.
+
+### Default actions per checkpoint (used only in `--auto` mode)
 
 | Trigger | Auto-default action |
 |---|---|
@@ -128,34 +125,21 @@ If user responds before 300s, just proceed normally — the scheduled wakeup wil
 
 ### Logging — `docs/AUTO_DECISIONS.md`
 
-When AI auto-decides past a checkpoint (whether via wakeup OR via user telling it to skip), it MUST log the decision:
+When AI auto-decides past a checkpoint in `--auto` mode (or via user explicitly telling it to skip), it MUST log the decision:
 
 ```markdown
-# Auto-decisions (user did not respond at checkpoint)
+# Auto-decisions (--auto mode, or user told the skill to skip)
 
-- 2026-05-25 02:14: Checkpoint 1 timeout (5m elapsed). Auto-accepted:
+- 2026-05-25 02:14: Checkpoint 1 skipped (--auto). Auto-accepted:
   - OUTLINE.md as generated (38 pages, no edits)
   - ASSET_PLAN.md (KEEP×4, DUOTONE×3, DROP×2)
   - TABLES.md (3 charts, all marked confidence:medium)
   - FONTS.md (all 4 fonts → KEEP-with-fallback per default rules)
-- 2026-05-25 02:24: Checkpoint 2 timeout. Auto-picked: `sakura-chroma` (candidate #1)
-- 2026-05-25 03:55: Checkpoint 3 timeout. Assumed OK, proceeded to Phase 5.
+- 2026-05-25 02:24: Checkpoint 2 skipped (--auto). Auto-picked: `sakura-chroma` (candidate #1)
+- 2026-05-25 03:55: Checkpoint 3 skipped (--auto). Assumed OK, proceeded to Phase 5.
 ```
 
 This file is the FIRST thing the morning report points the user at, so they can spot-fix bad auto-decisions via Iteration mode.
-
-### `--auto` flag — skip checkpoints entirely
-
-Invoke as `/p2h2p <input> --auto` to bypass all 3 checkpoints — completely unattended run. Don't post checkpoint messages at all; just write defaults to `docs/AUTO_DECISIONS.md` and continue. Useful for:
-- Overnight bulk runs
-- Batch processing multiple decks
-- "Just give me something to start from" workflows
-
-In `--auto` mode, the morning report becomes the user's ONLY interface to the result.
-
-### Why this pattern matters (lesson from a real bug)
-
-A previous run of this skill posted "等你 (5 分钟超时)" messages at Checkpoint 1 and Checkpoint 3 WITHOUT scheduling wakeups. The skill author (me) thought the runtime would auto-fire the timeout based on the SKILL.md prose — but the runtime is event-driven (user message OR background-agent completion), and prose isn't an event. Both checkpoints blocked indefinitely until the user manually pinged. The fix was to make the timeout a concrete `ScheduleWakeup` call paired with every checkpoint message. **Never just promise a timeout in text — schedule it.**
 
 ---
 
@@ -240,6 +224,51 @@ A continuous long HTML page (not paginated) printed to PDF will **slice cards ac
   --no-pdf-header-footer --print-to-pdf="out.pdf" "file:///abs/path/page.html"
 ```
 Verify by rendering the PDF to JPGs and eyeballing that no card is cut — same reviewer discipline as Phase 6.
+
+---
+
+## Product-showcase decks (HTML-first, often PDF delivery)
+
+**Trigger**: the deck introduces products / services to a client or partner (产品概念提案、产品介绍、方案展示). The main pipeline applies, with the rules below added. **Delivery branch**: if the user wants HTML (+ PDF) and no .pptx, skip Phase 5 and run Phase 6's two reviewer passes on the HTML page screenshots and the exported PDF pages (S7) — hard contract #6 still applies. If a .pptx is also wanted, run Phase 5–6 as usual.
+
+### S1 — Style gate: 3 covers before any page is built
+- Skipping the outline checkpoint ("build directly, no need to confirm structure") does **not** skip the style decision. Palette or mood words ("warm white, ink, a touch of red") are inputs, not a pick. This gate replaces CHECKPOINT 2 for this deck type; skip it only if the user names a concrete style (a template slug, a reference deck / screenshot to match, or a direction already chosen). In `--auto` mode, still render the 3 covers, take #1, and log it in `docs/AUTO_DECISIONS.md`.
+- Render the **cover** in 3 genuinely different directions (not one design tweaked three ways), each with **one content-page sample**, on a side-by-side comparison page. Use the deck's real copy — no invented text (contracts #1, #8). Library templates may be the starting point; if a .pptx is also wanted, respect `ppt_compat`. The user picks; only then build pages.
+- While waiting, only style-independent groundwork may run (crops, deck shell, build / screenshot scripts). `tokens.css` stays a skeleton; no sample pages.
+- After the pick, Step 3.1 pins the style in `src/tokens.css`; add a short `docs/STYLE_SPEC.md` naming each token's usage and the shared component class names. It references tokens and never restates hex / px values.
+
+### S2 — How to show product UI
+| Page role | Show the UI as |
+|---|---|
+| overview and chapter pages, and TOC entries that show a product | the **full screen inside a device mockup** (phone / tablet shell), never a bare screenshot |
+| pages that explain a function or step | a **readable local crop** of the real UI; never shrink a full screen to fit |
+| overview of N products | N mockups side by side, each with product name + one-line function underneath. **Never** a collage of small fragmented crops |
+
+- Readability: the UI's body text must display no smaller than the deck's smallest caption token. Check: displayed px = source text px × (displayed width ÷ source width). If a crop can't reach that, crop tighter or split the page.
+- Reuse mockup assets that already exist in the user's projects (e.g. the phone-shell code of a product promo video) — extract and render them, don't redesign a device frame. Render at 2–3× with a transparent background (a PNG — element screenshot with `omitBackground: true`; JPEG has no alpha); the screen content is the source image the brief designates (if the existing asset shows a different version, swap the screen, keep the shell).
+
+### S3 — Every image must earn its place
+- Apply contract #7 to images: remove it — does the reader understand less? If not, delete it; typography or a diagram can carry the page. Never add an image just so the page "looks illustrated".
+- If atmosphere / space images are tone-matched to the palette, never apply that filter to product UI, product artwork, QR codes, logos, reference images, or photos of people (contract #1).
+- Captions follow contract #1: only text found in the source or brief. Dropping captions never drops the truth duty — body copy must not call a rendering a real photo or a concept UI a shipped product. When an identity note is required, prefer one note per page or one deck-level note over the same disclaimer under every image, unless the user asks otherwise. Don't repeat the brand name next to a logo that already contains it.
+
+### S4 — Text blocks need hierarchy
+A block of text = **small heading → one core sentence** (display face, primary ink, one step up the type scale) **→ itemized details** (one step down, muted color, tighter line height, accent bullets). Gap between items < gap between blocks. Process-like details become a mini flow diagram, not a sentence. Three paragraphs of equal size and spacing = rework.
+
+### S5 — Structure and branding consistency
+- If chapters are numbered, the numbers match everywhere — TOC, chapter pages, eyebrow labels, and any nav data attribute. Renumber all of them in one pass.
+- Logo: original file, original ratio, same position on every page that carries it; don't add a small logo to a page that already shows a large one.
+- Supplied QR codes and brand artwork: exact file, no recolor, crop or redraw. Keep brand QR codes visually distinct from product-entry QR placeholders, and never fake a scannable entry code.
+
+### S6 — Iteration discipline
+- Apply a user's change only where they point. If the same pattern exists elsewhere, list those pages in one question in the same reply; if they say "only what I mentioned", obey. Reviewer-found defects (overflow, collision) are still fixed everywhere per Phase 6 "Fix discipline".
+- Append every user-requested change to `docs/CHANGES.md` (dated, numbered, "overrides the original brief / outline") **before** dispatching it, and include that file in every builder and reviewer prompt, so nobody reverts it by following the original brief.
+- Concurrent requests go to the single active writer (contract #9).
+
+### S7 — Exporting the HTML deck to PDF (when asked)
+- **Default: raster PDF.** Puppeteer or Playwright, viewport = the deck's native stage size (e.g. 1920×1080), `deviceScaleFactor: 2`. Per page: navigate with the deck's own mechanism (API, hash or keys) and assert the shown page number (indices are often 1-based); await `document.fonts.ready` and image `decode()`; let entry animations and JS-drawn elements (Step 3.7 / 3.8 graphics, connector lines) settle; hide on-screen nav controls; `screenshot({type:'jpeg', quality:92})`. Combine with the img2pdf Python API at dpi = 96 × deviceScaleFactor, so each page is stage px × 0.75 pt (1920×1080 → 1440×810 pt): `img2pdf.convert(files, layout_fun=img2pdf.get_fixed_dpi_layout_fun((192, 192)))` (`pip3 install --user --break-system-packages img2pdf`). JPEGs are embedded as-is. Tell the user once that PDF text isn't selectable.
+- **Why not `page.pdf()` / `--print-to-pdf`**: a scale-to-fit stage (`top:50%` + `transform: scale`) can print only its top half, and CSS box-shadows can come out as **solid grey boxes in macOS Preview** while poppler renders them fine, so a pdftoppm-only check misses it. Don't run Ghostscript over a Chrome PDF to shrink it (in a real run it blanked images and worsened the boxes). Use vector export only when selectable text is required, after removing box-shadow / filter and verifying in Preview's engine.
+- **Verify with Preview's engine**: `pdfseparate -f N -l N deck.pdf pN.pdf`, then `qlmanage -t -s 1600 -o <dir> pN.pdf` for a shadow-heavy page, a mockup page and a UI-crop page; plus `pdftoppm -r 30` on all pages (montage them) to check count and order.
 
 ---
 
@@ -447,6 +476,8 @@ For every image in `extract/unpacked/ppt/media/`, agent default-fills a decision
 
 Any image that visually contains a **chart, graph, plot, trend line, bar chart, pie chart, data table screenshot, or analytics-UI screenshot** (Google Trends, Etsy stats, GA dashboards, etc.) — agent MUST classify as `CHART`, not `KEEP`. No exceptions.
 
+**Exception — product-showcase decks**: screenshots / renders of the product being showcased are product artwork → `KEEP`, never `CHART` or `DUOTONE`, even if the UI contains charts. The chart rule targets data evidence, not the product itself.
+
 Tempting bad reasoning to reject:
 - ❌ "The shape/trajectory IS the content, OCR can't capture it" — false. Peak times + rough magnitudes + overall direction (rising/flat/declining) are extractable and sufficient to re-render natively.
 - ❌ "OCR isn't accurate enough" — accuracy 80% is fine; agent flags `confidence: medium` and user confirms at Checkpoint 1.
@@ -631,7 +662,7 @@ Commit after Phase 1 completes: `phase 1: extracted + cataloged`.
 
 ### ⏸️ CHECKPOINT 1 (consolidated)
 
-Post the message AND schedule the wakeup in the same response (atomic). No exceptions.
+Post the message, then wait — no timer:
 
 Message to user:
 > "Phase 1 完成 — 请一并审：
@@ -644,25 +675,15 @@ Message to user:
 >
 > 仅当 OUTLINE `Notes` 列提示某页 confidence:low 时，再打开对应 `slides/p{NN}.json` 检查 role 推断对不对。其它页 JSON 不需要看。
 >
-> 改完任意文件，说 'continue' 进 Phase 2 模板选择。5 分钟没回应我默认全部通过。"
+> 改完任意文件，说 'continue' 进 Phase 2 模板选择。"
 
-Then immediately:
-```
-ScheduleWakeup(
-  delaySeconds: 300,
-  reason: "Checkpoint 1 timeout — auto-accept outline/assets/tables, proceed to Phase 2",
-  prompt: "Checkpoint 1 timeout fired. Check git log for any user-driven commits to
-          docs/OUTLINE.md / docs/ASSET_PLAN.md / docs/TABLES.md since checkpoint posted.
-          If yes → proceed with user's edits. If no → append timeout entry to
-          docs/AUTO_DECISIONS.md and start Phase 2 (template selection)."
-)
-```
-
-If user responds before fire, just continue normally. The wakeup will harmlessly fire later and find the project already advanced.
+Then wait for the user's reply — no scheduled timer. When they respond, check git log for any user-driven commits to docs/OUTLINE.md / docs/ASSET_PLAN.md / docs/TABLES.md since the checkpoint was posted and proceed with their edits (or their explicit 'continue').
 
 ---
 
 ## Phase 2 — Template selection
+
+For product-showcase decks, the 3-cover style gate in "Product-showcase decks → S1" replaces CHECKPOINT 2 (covers rendered from the deck's real copy, library templates optional). The `ppt_compat` filter below applies only when a .pptx is also delivered.
 
 **Delegate to beautiful-html-templates skill.** Per its Step 2-4:
 - Read `~/.claude/skills/beautiful-html-templates/source/index.json` (46 templates as of 2026-05-24; 34 original + 12 ported from frontend-slides)
@@ -715,24 +736,15 @@ done
 
 ### ⏸️ CHECKPOINT 2
 
-Post the message AND schedule the wakeup atomically:
+Post the message, then wait — no timer:
 
 > "3 个模板候选已打开:
 > 1. <slug A> — <tone>
 > 2. <slug B> — <tone>
 > 3. <slug C> — <tone>
-> 选哪个？5 分钟后我默认用 #1。"
+> 选哪个？"
 
-Then immediately:
-```
-ScheduleWakeup(
-  delaySeconds: 300,
-  reason: "Checkpoint 2 timeout — auto-pick candidate #1, proceed to Phase 3",
-  prompt: "Checkpoint 2 timeout fired. Check if user picked a template. If yes → use it.
-          If no → append timeout entry to docs/AUTO_DECISIONS.md, copy candidate #1's
-          template files into the project, and start Phase 3 (HTML build)."
-)
-```
+When the user responds, use the template they picked and proceed to Phase 3 (HTML build).
 
 ---
 
@@ -751,6 +763,7 @@ Slice the outline into chunks of up to 7 pages each. Spawn 5-8 builder subagents
 - `src/tokens.css`
 - HTML screenshot of the chosen template's reference pages for visual anchoring
 - Strict instruction: "use slide JSON's `role` + `level` + `parent` + `emphasis` fields to drive your layout — don't infer structure from prose"
+- Product-showcase decks: rules S2–S5 from "Product-showcase decks" and `docs/CHANGES.md`, verbatim in the prompt
 
 ### Step 3.3 — Mini-reviewer + auto-fix loop (per builder, mandatory)
 
@@ -1004,30 +1017,22 @@ open <project>/index.html
 
 ### ⏸️ CHECKPOINT 3
 
-Open index.html in browser, post message AND schedule wakeup atomically:
+Open index.html in browser, post the message, then wait — no timer:
 
 > "HTML deck 跑完了:
 > /abs/path/to/index.html
 >
-> 自己用方向键/空格翻页过一遍。OK 我转 PPT；不 OK 列页码 + 问题，我修。5 分钟没回应我默认 OK 继续。"
+> 自己用方向键/空格翻页过一遍。OK 我转 PPT；不 OK 列页码 + 问题，我修。"
 
-Then immediately:
-```
-ScheduleWakeup(
-  delaySeconds: 300,
-  reason: "Checkpoint 3 timeout — auto-OK, proceed to Phase 5 (PPT generation)",
-  prompt: "Checkpoint 3 timeout fired. Check if user responded with 'OK' or a fix list.
-          If fix list → loop back into Phase 3, address, re-open, re-schedule.
-          If no response → append timeout entry to docs/AUTO_DECISIONS.md and start
-          Phase 5 (HTML → PPT via pptxgenjs)."
-)
-```
+When the user responds with 'OK', proceed to Phase 5 (HTML → PPT via pptxgenjs).
 
-**If user gives a fix list**: loop into Phase 3 with the punch list, apply fixes, re-open, and re-schedule a new wakeup. Don't proceed to Phase 5 until user approves OR timeout fires with no response.
+**If user gives a fix list**: loop into Phase 3 with the punch list, apply fixes, re-open, and wait again. Don't proceed to Phase 5 until the user approves.
 
 ---
 
 ## Phase 5 — HTML → PPT
+
+> **Product-showcase decks delivered as HTML (+ PDF) only**: skip this phase; export the PDF per "Product-showcase decks → S7", then go to Phase 6.
 
 > ⚠️ **Single-writer + no-sentinel (contract #9) applies hardest here.** The pptx builder script (`build/build_pptx.js`) is ONE file. Register its writer in `docs/WRITERS.md`, dispatch exactly one builder, and put in its prompt: "completion = the .pptx + render JPGs exist on disk (you ls them before returning); no sentinels, no 'waiting for notification'." If you think the builder died and want to re-dispatch, first prove it dead by the three probes in contract #4 (jsonl stalled ≥90s AND no output file AND process gone) — otherwise you'll race two builders onto the same script.
 
@@ -1110,7 +1115,7 @@ This rule applies to the **cover page too** (which often skips `paintChrome` and
 
 ## Phase 6 — Final QA
 
-Phase 6 is a **commit-gate**, not optional polish. Per Hard contract #6, no build ships without a passing reviewer-pass — `node build.js` exiting 0 does NOT prove the rendered output is correct.
+Phase 6 is a **commit-gate**, not optional polish. Per Hard contract #6, no build ships without a passing reviewer-pass — `node build.js` exiting 0 does NOT prove the rendered output is correct. With no .pptx (product-showcase HTML + PDF delivery), both passes run on HTML page screenshots at the deck's stage size and on the exported PDF pages rendered via `qlmanage`.
 
 ### Two reviewer passes (mandatory, in order)
 
@@ -1203,7 +1208,7 @@ Look for artifacts produced by each phase. The most-advanced artifact present te
 
 | Found in project dir | State | Resume from |
 |---|---|---|
-| `build/*.pptx` | Full pipeline ran to completion | **Iteration mode** (see below) |
+| `build/*.pptx`, or `build/*.pdf` for an HTML + PDF delivery | Full pipeline ran to completion | **Iteration mode** (see below) |
 | `index.html` + no `build/*.pptx` | Phase 3 done, Phase 5 incomplete | Phase 4 (HTML preview) |
 | `docs/OUTLINE.md` + no `index.html` | Phase 1 done, Phase 2/3 incomplete | Phase 2 (template selection) |
 | `extract/extracted.md` + no `docs/OUTLINE.md` | Phase 1 mid-run, interrupted | Resume Phase 1 from Step 1.2 |
@@ -1222,7 +1227,7 @@ When `build/*.pptx` exists, the user is asking to tweak an already-shipped deck.
    - Change template / overall visual → not iteration; ask user to confirm full rebuild
 3. **Apply edit to `index.html`** (Phase 3 partial — only touch affected pages/CSS)
 4. **Re-open `index.html`** for confirm (mini Checkpoint 3)
-5. **Regenerate PPT** — run Phase 5's `node src/build.js`. Never hand-edit `.pptx`; it's regenerable.
+5. **Regenerate the deliverables** — .pptx via Phase 5's `node src/build.js`, and/or PDF via S7. Never hand-edit `.pptx`; it's regenerable.
 6. **QA scope**: never skip QA entirely (contract #6 covers iterations too) — for a small patch run a LIGHTWEIGHT reviewer pass on the affected pages only (not the full 2-pass QA); for a structural change run the full 2-pass QA. "Small" = text/color/position tweak with no layout-engine change.
 7. **Commit** the iteration as a new commit on top of the existing git history.
 

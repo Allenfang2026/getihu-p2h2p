@@ -61,7 +61,7 @@ This skill is an **orchestration layer built on top of two existing skills** —
 - **`beautiful-html-templates`** — handles template selection and HTML deck generation (Phases 2–4). That skill is itself a wrapper around the open-source template library [**zarazhangrui/beautiful-html-templates**](https://github.com/zarazhangrui/beautiful-html-templates).
 - **`pptx`** — handles HTML → `.pptx` conversion and visual QA (Phases 5–6).
 
-P2H2P's own contribution is the pipeline glue: structured semantic content extraction, the 3-checkpoint async-review flow with scheduled-wakeup timeouts, recursive shard-and-retry on builder failure, the per-builder mini-reviewer loop, and iteration mode for tweaking shipped decks.
+P2H2P's own contribution is the pipeline glue: structured semantic content extraction, the 3-checkpoint async-review flow with user-driven checkpoints (no timers), recursive shard-and-retry on builder failure, the per-builder mini-reviewer loop, and iteration mode for tweaking shipped decks.
 
 ## License
 
